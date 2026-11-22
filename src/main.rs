@@ -69,7 +69,7 @@ fn print_json<T: Serialize>(value: &T) -> Result<(), serde_json::Error> {
     Ok(())
 }
 
-async fn run() -> Result<(), Box<dyn std::error::Error>> {
+async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     let cli = Cli::parse();
     let store = Store::new(connect().await?);
 

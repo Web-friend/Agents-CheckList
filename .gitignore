@@ -1,1 +1,6 @@
 /target
+/mcp/node_modules/
+/mcp/coverage/
+checklister.db
+checklister.db-shm
+checklister.db-wal

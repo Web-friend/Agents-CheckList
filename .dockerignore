@@ -1,0 +1,13 @@
+.git
+.agents
+.codex
+.aws
+.gitignore
+.dockerignore
+target
+node_modules
+mcp/node_modules
+mcp/coverage
+checklister.db
+checklister.db-shm
+checklister.db-wal
