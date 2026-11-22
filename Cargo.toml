@@ -1,3 +1,6 @@
+[workspace]
+members = ["crates/checklister-node"]
+
 [package]
 name = "checklister"
 version = "0.1.0"

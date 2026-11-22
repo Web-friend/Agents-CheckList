@@ -8,7 +8,9 @@
   },
   "scripts": {
     "start": "node index.js",
-    "test": "cargo build --bin checklister && node --test"
+    "build:native": "node scripts/build-native.mjs --release",
+    "build:native:debug": "node scripts/build-native.mjs",
+    "test": "node scripts/build-native.mjs && node --test"
   },
   "dependencies": {
     "@modelcontextprotocol/server": "^2.4.0",

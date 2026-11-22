@@ -1,0 +1,16 @@
+[package]
+name = "checklister-node"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+checklister = { path = "../.." }
+napi = { version = "3.16", features = ["async", "serde-json"] }
+napi-derive = "3"
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[build-dependencies]
+napi-build = "2"

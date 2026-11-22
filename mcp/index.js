@@ -1,8 +1,11 @@
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 
+import { openDatabase } from "./bridge.js";
 import { createServer } from "./server.js";
 
-const stdio = serveStdio(createServer, {
+const database = await openDatabase();
+
+const stdio = serveStdio(() => createServer(database), {
   onerror: (error) => console.error("MCP server error:", error),
 });
 

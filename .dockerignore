@@ -8,6 +8,7 @@ target
 node_modules
 mcp/node_modules
 mcp/coverage
+mcp/checklister.node
 checklister.db
 checklister.db-shm
 checklister.db-wal
