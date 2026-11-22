@@ -44,11 +44,23 @@ pub async fn connect() -> Result<SqlitePool, sqlx::Error> {
             checklist_id INTEGER NOT NULL REFERENCES checklists(id) ON DELETE CASCADE,
             status BOOLEAN NOT NULL DEFAULT FALSE CHECK (status IN (FALSE, TRUE)),
             title TEXT NOT NULL,
-            description TEXT NOT NULL DEFAULT ''
+            description TEXT NOT NULL DEFAULT '',
+            position INTEGER NOT NULL DEFAULT 0
         )",
     )
     .execute(&pool)
     .await?;
+
+    let has_position: i64 = sqlx::query_scalar(
+        "SELECT COUNT(*) FROM pragma_table_info('checks') WHERE name = 'position'",
+    )
+    .fetch_one(&pool)
+    .await?;
+    if has_position == 0 {
+        sqlx::query("ALTER TABLE checks ADD COLUMN position INTEGER NOT NULL DEFAULT 0")
+            .execute(&pool)
+            .await?;
+    }
 
     // Preserve items created by the previous version of the app.
     let has_legacy_items: i64 = sqlx::query_scalar(
@@ -58,12 +70,19 @@ pub async fn connect() -> Result<SqlitePool, sqlx::Error> {
     .await?;
     if has_legacy_items > 0 {
         sqlx::query(
-            "INSERT OR IGNORE INTO checks (id, checklist_id, status, title, description)
-             SELECT id, checklist_id, is_completed, content, '' FROM checklist_items",
+            "INSERT OR IGNORE INTO checks (id, checklist_id, status, title, description, position)
+             SELECT id, checklist_id, is_completed, content, '', position FROM checklist_items",
         )
         .execute(&pool)
         .await?;
     }
+
+    sqlx::query(
+        "CREATE INDEX IF NOT EXISTS checks_checklist_order
+         ON checks (checklist_id, position, id)",
+    )
+    .execute(&pool)
+    .await?;
 
     Ok(pool)
 }

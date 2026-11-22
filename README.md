@@ -1,13 +1,28 @@
 # Checklister
 
-A Tokio-based TCP echo server with an SQLite database initialized for checklists and their checks. The database layer is kept separate from the TCP server so it can be reused when API routes are added.
+A command-line checklist manager backed by SQLite. The application operations live in a reusable library layer, so a future MCP server can expose the same operations without duplicating database logic.
 
-The `checklists` table contains an auto-incrementing `id` and a `name`. The `checks` table contains an auto-incrementing `id`, its parent `checklist_id`, a boolean `status`, a `title`, and a `description` stored as text. Deleting a checklist cascades to its checks.
-
-## Run
+## Usage
 
 ```sh
-cargo run
+cargo run -- checklist create "Release prep"
+cargo run -- checklist list
+cargo run -- checklist show 1
+cargo run -- check add 1 --title "Run checks" --description "Run the project checks before release."
+cargo run -- check list 1
+cargo run -- check undone 1
+cargo run -- check complete 1 1
+cargo run -- check undo 1 1
+cargo run -- checklist delete 1
 ```
 
-The server listens on `127.0.0.1:8080` by default and creates `checklister.db` in the current directory. Set `CHECKLISTER_ADDR` to change the listen address, or `DATABASE_URL` to choose another SQLite database, for example `sqlite://data/checklister.db`.
+Commands print JSON to stdout. Errors print JSON to stderr and return a non-zero exit code. Check IDs are auto-incrementing; `position` records their order within a checklist.
+
+The database defaults to `checklister.db` in the current directory. Set `DATABASE_URL` to use another SQLite database, for example `sqlite://data/checklister.db` (the parent directory must already exist).
+
+## Data model
+
+- `checklists`: auto-incrementing `id` and `name`.
+- `checks`: auto-incrementing `id`, parent `checklist_id`, boolean `status` (default `false`), `title`, text `description`, and checklist `position`.
+
+Deleting a checklist cascades to its checks. Startup migrates data from the earlier checklist schema.
