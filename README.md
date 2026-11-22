@@ -1,6 +1,8 @@
 # Checklister
 
-A Tokio-based TCP echo server with an SQLite database initialized for checklist and checklist-item data. The database layer is kept separate from the TCP server so it can be reused when API routes are added.
+A Tokio-based TCP echo server with an SQLite database initialized for checklists and their checks. The database layer is kept separate from the TCP server so it can be reused when API routes are added.
+
+The `checklists` table contains an auto-incrementing `id` and a `name`. The `checks` table contains an auto-incrementing `id`, its parent `checklist_id`, a boolean `status`, a `title`, and a `description` stored as text. Deleting a checklist cascades to its checks.
 
 ## Run
 
