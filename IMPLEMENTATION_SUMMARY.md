@@ -1,41 +1,47 @@
 # Implementation Summary
 
-Date: 2026-11-22
+Date: 2026-11-23
 
 ## What was built
 
-- Replaced the original TCP echo server with a one-shot Rust CLI backed by persistent SQLite.
-- Added reusable Rust storage operations in the library layer for creating, listing, showing, and deleting checklists, and for adding, listing, completing, and undoing checks.
-- Added numbered SQL migrations and startup adoption of databases created by the earlier inline schema. The migration preserves legacy check order from saved positions.
-- Ordered checks by their creation timestamps, with the check ID as a deterministic tie-breaker. Each serialized check includes its one-based order.
-- Added a JavaScript MCP server using the official TypeScript SDK v2 over stdio. Its tools invoke the Rust CLI with argument arrays and return the CLI's JSON output.
-- Added a multi-stage Dockerfile that packages the Rust binary and MCP wrapper. The container uses `/data/checklister.db` and exposes no network port.
-- Updated the README with CLI commands, MCP tool names, local run instructions, Docker host configuration, database behavior, and test commands.
+- Kept the existing Rust `Store`, storage layer, numbered migrations, legacy-database adoption, SQLite pool, WAL behavior, foreign keys, and five-second busy timeout unchanged.
+- Added a native Rust MCP server at `src/bin/checklister-mcp` using the official `rmcp` SDK, Tokio, Serde, and JSON Schema generation.
+- Implemented all nine MCP tools over the shared Rust `Store`: `create_checklist`, `list_checklists`, `show_checklist`, `delete_checklist`, `add_check`, `list_checks`, `list_undone_checks`, `complete_check`, and `undo_check`.
+- Preserved tool names, titles, descriptions, argument names, required fields, schema constraints, response envelopes, direct read responses, errors, and MCP annotations.
+- Added a stdio integration suite that launches the compiled executable as a real subprocess against temporary SQLite databases.
+- Replaced the Node.js/Node-API/JavaScript MCP implementation with the native Rust executable.
+- Updated the Dockerfile to build and run the Rust MCP binary directly.
 
-## Rust–JavaScript FFI status
+## Architecture
 
-There is no native Rust–JavaScript FFI in this implementation. The MCP wrapper starts the Rust CLI as a child process for each tool call and exchanges JSON over stdout/stderr. No N-API addon or other in-process FFI binding has been added.
+```text
+AI agent
+  | MCP / JSON-RPC 2.0 over stdio
+checklister-mcp (runtime Rust)
+  | direct Rust calls
+Store + Storage (shared library)
+  | SQL
+SQLite
+```
 
-## MCP tools
+The CLI (`checklister`) and MCP server (`checklister-mcp`) share the same library, store, storage, schema, and migrations.
 
-- `create_checklist`
-- `list_checklists`
-- `show_checklist`
-- `delete_checklist`
-- `add_check`
-- `list_checks`
-- `list_undone_checks`
-- `complete_check`
-- `undo_check`
+## Removed
+
+- `crates/checklister-node/` and all `napi`/`napi-derive`/`napi-build` dependencies.
+- The `mcp/` JavaScript directory: `index.js`, `server.js`, `bridge.js`, `mcp.test.js`, `package.json`, `package-lock.json`, and build scripts.
+- `CHECKLISTER_NATIVE` and other Node.js-specific environment variables.
+- Node.js Docker build and runtime stages.
 
 ## Verification
 
-- `cargo test`: passed (3 unit tests and 2 integration tests).
+- `cargo fmt --check`: passed.
+- `cargo check --workspace`: passed.
+- `cargo test --workspace`: passed (3 library unit tests, 2 CLI integration tests, 6 native MCP stdio integration tests).
 - `cargo build --release --bin checklister`: passed.
-- `npm --prefix mcp test`: passed (CLI bridge and MCP tool tests).
-- Live stdio smoke check: initialized the MCP connection, listed tools, and created a checklist through the MCP tool call.
-- `git diff --check`: passed.
+- `cargo build --release --bin checklister-mcp`: passed.
+- The MCP tests verify initialization, capabilities, exact nine-tool registration, descriptions, schemas, annotations, all tool behavior, idempotency, cascading deletion, validation failures, invalid requests, persistence across process restarts, shared CLI/MCP database use, stdout cleanliness, and clean EOF shutdown.
 
 ## Container build status
 
-The Docker build was attempted but could not be verified because the environment denied access to `/var/run/docker.sock`, including on the elevated attempt. The Dockerfile and `.dockerignore` are present; build the image with `docker build -t checklister-mcp:local .` in an environment with a usable Docker daemon.
+The Dockerfile and `.dockerignore` are present and updated for the native binary. Docker image building was not executed in this environment.

@@ -1,10 +1,12 @@
 # Checklister
 
-Checklister is a Rust checklist CLI backed by a persistent SQLite database. A JavaScript MCP server exposes the same operations to AI agents through an in-process Node-API (FFI) addon. The Rust library remains the source of truth for checklist behavior.
+Checklister is a fully native Rust checklist application backed by a persistent SQLite database. The Rust CLI and the Rust MCP server share the same library, store, storage layer, schema, and migrations.
 
 - **CLI** — `checklister` for manual use and scripts.
-- **MCP server** — `mcp/` for AI agents such as OpenCode, Claude Desktop, Codex, Cursor, and Zed.
-- **Native addon** — `crates/checklister-node/`, built into `mcp/checklister.node` and loaded directly by Node.
+- **MCP server** — `checklister-mcp` for AI agents such as OpenCode, Claude Desktop, Codex, Cursor, and Zed.
+- **Shared library** — `src/store.rs` and `src/storage.rs` hold the only checklist implementation.
+
+No Node.js, N-API, FFI, or JavaScript layer is involved at build time or runtime.
 
 ## Contents
 
@@ -13,11 +15,10 @@ Checklister is a Rust checklist CLI backed by a persistent SQLite database. A Ja
 - [Using the MCP server with an AI agent](#using-the-mcp-server-with-an-ai-agent)
   - [How it works](#how-it-works)
   - [Requirements](#requirements)
-  - [Build the native addon](#build-the-native-addon)
+  - [Build the server](#build-the-server)
   - [Choose a database](#choose-a-database)
   - [Connect an agent](#connect-an-agent)
   - [Verify the connection](#verify-the-connection)
-  - [What the agent can do](#what-the-agent-can-do)
   - [Tool reference](#tool-reference)
   - [Response shapes](#response-shapes)
   - [Errors](#errors)
@@ -40,18 +41,17 @@ cargo run -- check add 1 --title "Run checks" --description "Run the project che
 cargo run -- checklist show 1
 ```
 
-Expose the same store to an AI agent:
+Build the native MCP server:
 
 ```sh
-npm --prefix mcp ci
-npm --prefix mcp run build:native
+cargo build --release --bin checklister-mcp
 ```
 
-Then point your agent at this command with an absolute database path:
+Then point your agent at the compiled executable with an absolute database path:
 
 ```sh
 DATABASE_URL=sqlite:///absolute/path/to/checklister.db \
-  node /absolute/path/to/checklister/mcp/index.js
+  /absolute/path/to/target/release/checklister-mcp
 ```
 
 The agent discovers nine tools and can create checklists, add checks, list remaining work, complete or reopen checks, and delete checklists. See [Connect an agent](#connect-an-agent) for host-specific configuration.
@@ -77,71 +77,48 @@ CLI commands print JSON to stdout. Errors print JSON to stderr and return a non-
 ### How it works
 
 ```text
-┌─────────────┐   MCP over stdio   ┌──────────────────┐   Node-API FFI   ┌──────────────────┐   SQL   ┌────────────┐
-│  AI agent   │ ◄────────────────► │  mcp/index.js    │ ◄──────────────► │ checklister.node │ ◄─────► │  SQLite    │
-│  (MCP host) │                    │  (Node process)  │                  │  (Rust addon)    │         │  database  │
-└─────────────┘                    └──────────────────┘                  └──────────────────┘         └────────────┘
+┌─────────────┐   MCP / JSON-RPC 2.0   ┌────────────────────┐   Rust calls   ┌──────────────────┐   SQL   ┌────────────┐
+│  AI agent   │ ◄────────────────────► │  checklister-mcp   │ ◄────────────► │  Store + Storage │ ◄─────► │  SQLite    │
+│  (MCP host) │      stdio transport   │  native executable │                │  (shared crate)  │         │  database  │
+└─────────────┘                        └────────────────────┘                └──────────────────┘         └────────────┘
 ```
 
-- The agent starts `node mcp/index.js` as a child process and speaks MCP over stdin/stdout.
-- `mcp/server.js` registers nine tools and validates their arguments with Zod.
-- `mcp/bridge.js` loads the native addon and opens the SQLite database once at startup.
-- The addon calls the Rust `Store` directly. No CLI subprocess is spawned per tool call.
-- Rust errors such as `checklist not found` are returned to the agent as tool errors.
-- Diagnostics go to stderr. stdout is reserved for MCP protocol messages.
+- The agent launches `checklister-mcp` as a child process and speaks MCP over stdin/stdout.
+- The server uses the official Rust MCP SDK (`rmcp`) with its native server abstractions and stdio transport.
+- Tool handlers call the shared Rust `Store` directly. No CLI subprocess is spawned per tool call.
+- The database is opened once at startup and migrations run before the server begins serving.
+- Rust errors such as `checklist not found` are returned as MCP tool errors.
+- Diagnostics go to stderr. stdout is reserved exclusively for MCP protocol messages.
 
-Because the database is opened once, migrations run at server startup rather than on every call. The CLI and the MCP server can use the same database file, but avoid writing from both at the same time for long periods; SQLite serializes writers and Checklister uses a five-second busy timeout.
+The CLI and the MCP server can use the same database file. SQLite serializes writers and Checklister keeps the existing five-second busy timeout.
 
 ### Requirements
 
 | Requirement | Needed for | Notes |
 | --- | --- | --- |
-| Node.js 20 or newer | Running the MCP server | Node-API addons and ESM top-level await are used. |
-| Rust 1.88 or newer | Building the addon | Not needed at runtime. napi-rs 3 requires 1.88+. |
-| A writable database path | Running the server | The parent directory must exist. The file is created if missing. |
+| Rust 1.88 or newer | Building the CLI and MCP server | The MCP SDK requires Rust 1.88+. |
+| A writable database path | Running either binary | The parent directory must exist. The file is created if missing. |
 | An MCP-capable agent | Using the tools | OpenCode, Claude Desktop, Codex, Cursor, Zed, or any stdio MCP host. |
 
-The addon is platform-specific. Build it on the operating system, architecture, and libc family where the agent will run. Rebuilding is a single command and does not require changing any JavaScript.
+Node.js is not required.
 
-### Build the native addon
-
-Install JavaScript dependencies and compile the Rust addon:
+### Build the server
 
 ```sh
-npm --prefix mcp ci
-npm --prefix mcp run build:native
+cargo build --release --bin checklister-mcp
 ```
 
-The build script runs `cargo build --release -p checklister-node` and copies the shared library to `mcp/checklister.node`. Verify it exists:
+The executable is written to `target/release/checklister-mcp` (`.exe` on Windows). Copy it anywhere and launch it directly.
+
+For development:
 
 ```sh
-ls -l mcp/checklister.node
+cargo build --bin checklister-mcp
 ```
-
-Useful variants:
-
-```sh
-# Faster, unoptimized build for development
-npm --prefix mcp run build:native:debug
-
-# Production install without test-only dependencies
-npm --prefix mcp ci --omit=dev
-```
-
-The loader resolves the addon in this order:
-
-1. The path in `CHECKLISTER_NATIVE`, when set.
-2. `mcp/checklister.node` (the packaged build).
-3. `target/release/libchecklister_node.so` (or the platform equivalent).
-4. `target/debug/libchecklister_node.so` (or the platform equivalent).
-
-If none of these exist, the server fails at startup with an instruction to run `build:native`. Set `CHECKLISTER_NATIVE` when the addon lives outside the `mcp/` directory, for example in a custom deployment bundle.
-
-The addon is loaded into the Node process. Keep `mcp/index.js`, `mcp/server.js`, `mcp/bridge.js`, `mcp/package.json`, `mcp/node_modules`, and `mcp/checklister.node` together. The `mcp/scripts/` directory is only needed to rebuild.
 
 ### Choose a database
 
-`DATABASE_URL` controls which SQLite file is used. Absolute paths are strongly recommended, because the working directory differs between the CLI, `npm --prefix mcp start`, and an agent-launched process.
+`DATABASE_URL` controls which SQLite file is used. Absolute paths are strongly recommended, because the working directory differs between the CLI and an agent-launched process.
 
 ```sh
 # Absolute path (three slashes after sqlite:)
@@ -151,7 +128,7 @@ DATABASE_URL=sqlite:///absolute/path/to/checklister.db
 DATABASE_URL=sqlite://checklister.db
 ```
 
-When `DATABASE_URL` is unset, the server uses `sqlite://checklister.db` relative to its working directory. With `npm --prefix mcp start`, that is `mcp/checklister.db`. With an agent that launches the script from a workspace root, it is the workspace root. Prefer an absolute path to avoid surprises.
+When `DATABASE_URL` is unset, the server uses `sqlite://checklister.db` relative to its working directory. Prefer an absolute path.
 
 Create the parent directory before starting the server:
 
@@ -159,11 +136,11 @@ Create the parent directory before starting the server:
 mkdir -p /absolute/path/to/data
 ```
 
-SQLite creates the database file and the `-wal` and `-shm` files on first use. Migrations run automatically. Deleting the database file resets all checklists.
+SQLite creates the database file and the `-wal` and `-shm` files on first use. Migrations run automatically. Existing databases created by earlier Checklister versions are adopted and preserved.
 
 ### Connect an agent
 
-Every MCP host needs the same two things: the command that starts the server and the `DATABASE_URL` environment variable. Use absolute paths everywhere.
+Every MCP host needs the compiled executable and the `DATABASE_URL` environment variable. Use absolute paths everywhere.
 
 #### OpenCode (V2)
 
@@ -176,7 +153,7 @@ OpenCode V2 configures MCP servers under `mcp.servers`. Add this to `opencode.js
     "servers": {
       "checklister": {
         "type": "local",
-        "command": ["node", "/absolute/path/to/checklister/mcp/index.js"],
+        "command": ["/absolute/path/to/checklister-mcp"],
         "environment": {
           "DATABASE_URL": "sqlite:///absolute/path/to/checklister.db"
         }
@@ -191,24 +168,12 @@ The CLI can write this entry for you:
 ```sh
 opencode mcp add checklister \
   --env DATABASE_URL=sqlite:///absolute/path/to/checklister.db \
-  -- node /absolute/path/to/checklister/mcp/index.js
+  -- /absolute/path/to/checklister-mcp
 
 opencode mcp list
 ```
 
 OpenCode reloads configuration after the file is saved; no restart is required. Use `/mcps` to inspect the connection, connect, or disconnect the server.
-
-OpenCode enables Code Mode for local MCP servers by default. Tools are grouped under the normalized server name, so the agent calls `tools.checklister.create_checklist(...)` and sees tool names such as `checklister_create_checklist`. Set `"codemode": false` on the server entry if you want the tools on the provider's native tool list instead.
-
-To keep the entry configured without connecting it:
-
-```jsonc
-{
-  "type": "local",
-  "command": ["node", "/absolute/path/to/checklister/mcp/index.js"],
-  "disabled": true
-}
-```
 
 #### Claude Desktop
 
@@ -221,8 +186,8 @@ Edit the Claude Desktop configuration file:
 {
   "mcpServers": {
     "checklister": {
-      "command": "/absolute/path/to/node",
-      "args": ["/absolute/path/to/checklister/mcp/index.js"],
+      "command": "/absolute/path/to/checklister-mcp",
+      "args": [],
       "env": {
         "DATABASE_URL": "sqlite:///absolute/path/to/checklister.db"
       }
@@ -231,7 +196,7 @@ Edit the Claude Desktop configuration file:
 }
 ```
 
-Restart Claude Desktop after editing the file. Use the absolute path to `node` (find it with `which node` or `where node`) because desktop applications often do not inherit the shell `PATH` that knows about `nvm`, `fnm`, or Homebrew.
+Restart Claude Desktop after editing the file.
 
 #### Other MCP hosts
 
@@ -241,8 +206,8 @@ Most hosts accept the same `mcpServers` shape:
 {
   "mcpServers": {
     "checklister": {
-      "command": "node",
-      "args": ["/absolute/path/to/checklister/mcp/index.js"],
+      "command": "/absolute/path/to/checklister-mcp",
+      "args": [],
       "env": {
         "DATABASE_URL": "sqlite:///absolute/path/to/checklister.db"
       }
@@ -254,7 +219,7 @@ Most hosts accept the same `mcpServers` shape:
 Some hosts use a single `command` array instead of separate `command` and `args`, and some call the environment map `environment` or `env`. The values are the same:
 
 ```text
-node /absolute/path/to/checklister/mcp/index.js
+/absolute/path/to/checklister-mcp
 DATABASE_URL=sqlite:///absolute/path/to/checklister.db
 ```
 
@@ -284,51 +249,6 @@ Create a checklist called "Agent smoke test" and add a check titled "Confirm MCP
 
 If the tools do not appear, see [Troubleshooting](#troubleshooting).
 
-### What the agent can do
-
-The agent has nine tools. It can chain them to plan work, report progress, and clean up:
-
-| Goal | Tools the agent uses |
-| --- | --- |
-| Create a checklist | `create_checklist` |
-| Discover checklist IDs | `list_checklists` |
-| Inspect everything in a checklist | `show_checklist` |
-| Add work items | `add_check` |
-| See all checks, including completed ones | `list_checks` |
-| See only remaining work | `list_undone_checks` |
-| Mark work done | `complete_check` |
-| Reopen work | `undo_check` |
-| Remove a checklist and all its checks | `delete_checklist` |
-
-Example prompts that work well:
-
-```text
-Create a checklist named "Release 1.0" and add checks for running tests,
-updating the changelog, and tagging the release.
-```
-
-```text
-What is still undone on checklist 1? Summarize the remaining work.
-```
-
-```text
-Mark the "Run tests" check on checklist 1 as complete.
-```
-
-```text
-Reopen the changelog check on checklist 1; we still need to update it.
-```
-
-```text
-Show me checklist 2 and tell me how many checks are complete.
-```
-
-```text
-Delete checklist 3. Ask me to confirm before you do it.
-```
-
-Because every response is JSON, the agent can also build its own summaries, compare checklists, or report progress without additional tooling.
-
 ### Tool reference
 
 All tools take JSON arguments. IDs are positive integers. `check_id` must belong to `checklist_id`; the store scopes every check operation to its parent checklist.
@@ -353,7 +273,7 @@ A `Check` object has this shape:
   "checklist_id": 1,
   "status": false,
   "title": "Run tests",
-  "description": "Run cargo test and npm --prefix mcp test.",
+  "description": "Run cargo test.",
   "created_at": "2026-11-22T16:29:09.651Z",
   "order": 3
 }
@@ -416,7 +336,7 @@ Adds a check to an existing checklist.
 {
   "checklist_id": 1,
   "title": "Run tests",
-  "description": "Run cargo test and npm --prefix mcp test."
+  "description": "Run cargo test."
 }
 ```
 
@@ -491,7 +411,7 @@ Read tools return their data directly:
       "checklist_id": 1,
       "status": true,
       "title": "Run tests",
-      "description": "Run cargo test and npm --prefix mcp test.",
+      "description": "Run cargo test.",
       "created_at": "2026-11-22T16:29:09.651Z",
       "order": 1
     }
@@ -521,7 +441,7 @@ Common errors:
 | `unable to open database file` | The parent directory is missing or not writable. | Create the directory and fix permissions. |
 | `database is locked` | Another writer held the database longer than the busy timeout. | Retry the call; avoid long concurrent writes from the CLI and the agent. |
 
-Invalid arguments, such as a non-positive ID or an empty checklist name, are rejected by the tool schema before the Rust store is called.
+Invalid arguments, such as a non-positive ID or an empty checklist name, are rejected by the tool input schema and parameter validation before the Rust store is called.
 
 ### Permissions and safety
 
@@ -546,7 +466,7 @@ Annotations are hints, not enforcement. If you want hard limits, configure permi
 }
 ```
 
-The server has no network listener and no authentication. Anyone who can run the Node process can read and modify the SQLite file, so protect the database with normal filesystem permissions and do not expose it to untrusted agents.
+The server has no network listener and no authentication. Anyone who can run the executable can read and modify the SQLite file, so protect the database with normal filesystem permissions and do not expose it to untrusted agents.
 
 Before bulk changes, back up the database:
 
@@ -561,23 +481,18 @@ Using SQLite's `.backup` command is safer than copying the file while the server
 | Variable | Used by | Default | Notes |
 | --- | --- | --- | --- |
 | `DATABASE_URL` | MCP server and CLI | `sqlite://checklister.db` | Absolute paths are recommended: `sqlite:///absolute/path/checklister.db`. |
-| `CHECKLISTER_NATIVE` | MCP bridge | unset | Absolute path to a custom `checklister.node` addon. |
-| `NODE_ENV` | Docker image | `production` | Does not change server behavior. |
 
-`CHECKLISTER_BIN` is no longer used. The MCP server no longer invokes the CLI binary; it calls the Rust library in-process. The CLI itself is still available for manual use.
+No other environment variables affect the server.
 
 ### Troubleshooting
 
 | Symptom | Likely cause | Fix |
 | --- | --- | --- |
-| `Could not find the Checklister native addon` | The addon was not built or was moved. | Run `npm --prefix mcp run build:native` or set `CHECKLISTER_NATIVE`. |
-| `Cannot find package '@modelcontextprotocol/server'` | `mcp/node_modules` is missing. | Run `npm --prefix mcp ci`. |
-| `invalid ELF header`, `wrong ELF class`, or `cannot open shared object file` | The addon was built for a different OS, architecture, or libc. | Rebuild on the target machine with `npm --prefix mcp run build:native`. |
 | `unable to open database file` | The parent directory does not exist or is read-only. | `mkdir -p` the parent and make it writable by the agent's user. |
 | `database is locked` | Two processes are writing at once. | Retry; keep CLI writes short; do not run long transactions. |
 | `checklist not found` or `check not found` | The ID is stale or belongs to another checklist. | Re-list and use current IDs. |
-| Agent shows no tools | The host did not load the config or the command failed. | Run the command by hand, check `opencode mcp list` or `/mcps`, and inspect the host logs. |
-| Server exits immediately | Missing Node version, addon, dependency, or bad `DATABASE_URL`. | Run `node /absolute/path/to/mcp/index.js` manually and read stderr. |
+| Agent shows no tools | The host did not load the config or the executable failed. | Run the executable by hand, check `opencode mcp list` or `/mcps`, and inspect the host logs. |
+| Server exits immediately | Bad `DATABASE_URL` or unreadable database path. | Run `checklister-mcp` manually and read stderr. |
 | Agent calls a tool but the database never changes | The agent process has a different `DATABASE_URL`. | Put `DATABASE_URL` in the server's `environment`/`env` config, not only in your shell. |
 | Tools work in the CLI but not in the agent | The CLI and agent point at different files. | Use the same absolute `DATABASE_URL` in both. |
 | Docker: `attempt to write a readonly database` | A bind-mounted `/data` is not writable by container uid 1000. | `chown -R 1000:1000` the host directory or use a named volume. |
@@ -590,23 +505,16 @@ Start the server exactly as the agent would:
 
 ```sh
 DATABASE_URL=sqlite:///absolute/path/to/checklister.db \
-  node /absolute/path/to/checklister/mcp/index.js
+  /absolute/path/to/checklister-mcp
 ```
 
 It prints nothing and waits for MCP messages on stdin. That is expected. Press `Ctrl+C` to stop it.
 
-To inspect the tools interactively, use the official MCP Inspector:
-
-```sh
-DATABASE_URL=sqlite:///absolute/path/to/checklister.db \
-  npx @modelcontextprotocol/inspector node /absolute/path/to/checklister/mcp/index.js
-```
-
-The inspector opens a browser UI where you can list tools, fill in arguments, and call them. This is the fastest way to verify the server without involving an agent.
+To inspect the tools interactively, use any MCP Inspector by configuring it to launch the `checklister-mcp` executable over stdio.
 
 ## Docker
 
-Docker is optional. Use it when you want a self-contained Linux runtime, a prebuilt addon, or isolation from the host toolchain. Local mode is simpler and does not need Docker.
+Docker is optional. Use it when you want a self-contained Linux runtime or isolation from the host toolchain.
 
 Build the image:
 
@@ -614,7 +522,7 @@ Build the image:
 docker build -t checklister-mcp:local .
 ```
 
-The image builds the Rust addon during the image build and ships `checklister.node`; it does not include the Rust toolchain or the CLI binary at runtime.
+The image builds the native Rust MCP executable and runs it directly. It does not include Node.js, a JavaScript runtime, or the Rust toolchain at runtime.
 
 Run it with a persistent named volume:
 
@@ -635,7 +543,7 @@ docker run --rm -i \
   checklister-mcp:local
 ```
 
-The container runs as the `node` user (uid 1000). A bind-mounted directory must be writable by that uid.
+The container runs as uid 1000. A bind-mounted directory must be writable by that uid.
 
 OpenCode config for the container:
 
@@ -681,68 +589,53 @@ The container uses stdio and does not expose a network port. Each `docker run` s
 
 ## Development
 
-Run the Rust tests:
+Run formatting, checks, and the full test suite:
 
 ```sh
-cargo test
+cargo fmt --check
+cargo check --workspace
+cargo test --workspace
 ```
 
-Run the MCP tests. This builds the debug addon first:
-
-```sh
-npm --prefix mcp test
-```
-
-The MCP tests cover the nine tool registrations, descriptions, parameter docs, annotations, a full create → add → complete → show → undo → delete round trip, missing-ID errors, and descriptions containing spaces and unicode.
-
-Build the addon in debug mode for faster iteration:
-
-```sh
-npm --prefix mcp run build:native:debug
-```
+The MCP integration tests launch the compiled `checklister-mcp` executable as a real stdio subprocess against temporary SQLite databases. They cover initialization, capabilities, exact tool registration and descriptions, JSON input schemas, annotations, every tool, error handling, invalid requests, persistence across restarts, CLI/MCP database sharing, stdout cleanliness, and clean shutdown.
 
 Useful files:
 
 | Path | Purpose |
 | --- | --- |
-| `mcp/index.js` | Entry point; opens the database and serves stdio. |
-| `mcp/server.js` | Tool definitions, schemas, descriptions, and annotations. |
-| `mcp/bridge.js` | Loads the native addon and exposes `openDatabase`. |
-| `mcp/scripts/build-native.mjs` | Builds the addon and copies it to `mcp/checklister.node`. |
-| `crates/checklister-node/src/lib.rs` | Rust Node-API bindings for the `Database` class. |
+| `src/bin/checklister-mcp/main.rs` | Native MCP executable entry point, stdio transport, and shutdown. |
+| `src/bin/checklister-mcp/server.rs` | MCP server, tool definitions, schemas, handlers, and annotations. |
+| `tests/mcp_stdio.rs` | End-to-end stdio integration tests. |
+| `src/main.rs` | CLI argument parsing and JSON output. |
 | `src/store.rs` | Checklist and check operations shared by the CLI and MCP. |
+| `src/storage.rs` | Database connection, busy timeout, and migration lifecycle. |
 
-The CLI binary is still built by `cargo build --bin checklister`. The addon is built separately by `cargo build -p checklister-node` or the npm script.
+The CLI binary is built with `cargo build --bin checklister`. The MCP binary is built with `cargo build --bin checklister-mcp`.
 
 ## Database and migrations
 
 - `checklists`: auto-incrementing `id` and `name`.
-- `checks`: auto-incrementing `id`, parent `checklist_id`, boolean `status` (default `false`), `title`, text `description`, and `created_at`.
+- `checks`: auto-incrementing `id`, parent `checklist_id`, boolean `status` (default `false`), `title`, text `description`, `position`, and `created_at`.
 
-Check order is calculated from creation timestamps, with the check ID as a stable tie-breaker. Deleting a checklist cascades to its checks. Numbered SQL migrations in `migrations/` run when the CLI or MCP server first opens the database; older inline-schema databases are adopted and their existing check order is preserved.
+Check order is calculated from creation timestamps, with the check ID as a stable tie-breaker. Deleting a checklist cascades to its checks. Numbered SQL migrations in `migrations/` run when the CLI or MCP server opens the database; older inline-schema databases are adopted and their existing check order is preserved.
 
-The MCP server opens the database once at startup and keeps a connection pool for the lifetime of the process. The CLI opens the database per invocation. Both use the same schema and migrations.
+The MCP server opens the database once at startup and keeps the existing connection pool for the lifetime of the process. The CLI opens the database per invocation. Both use the same schema, migrations, WAL behavior, foreign-key constraints, and five-second busy timeout.
 
 ## Project layout
 
 ```text
 .
-├── src/                         Rust library and CLI
-│   ├── lib.rs                   Public library exports
-│   ├── main.rs                  CLI argument parsing and JSON output
-│   ├── storage.rs               Database connection and migrations
-│   └── store.rs                 Checklist and check operations
-├── crates/checklister-node/     Node-API addon
-│   ├── Cargo.toml
-│   ├── build.rs
-│   └── src/lib.rs
-├── mcp/                         MCP server
-│   ├── index.js                 stdio entry point
-│   ├── server.js                Tool registrations
-│   ├── bridge.js                Native addon loader
-│   ├── mcp.test.js              MCP integration tests
-│   └── scripts/build-native.mjs Addon build helper
-├── migrations/                  Numbered SQL migrations
-├── tests/                       Rust integration tests
-└── Dockerfile                   Optional container image
+├── src/                          Shared Rust library, CLI, and MCP server
+│   ├── lib.rs                    Public library exports
+│   ├── main.rs                   CLI argument parsing and JSON output
+│   ├── storage.rs                Database connection and migrations
+│   ├── store.rs                  Checklist and check operations
+│   └── bin/checklister-mcp/      Native Rust MCP server
+│       ├── main.rs               stdio entry point
+│       └── server.rs             Tools, schemas, and handlers
+├── migrations/                   Numbered SQL migrations
+├── tests/                        Rust integration tests
+│   ├── cli.rs                    CLI persistence and migration tests
+│   └── mcp_stdio.rs              End-to-end MCP tests
+└── Dockerfile                    Optional native container image
 ```

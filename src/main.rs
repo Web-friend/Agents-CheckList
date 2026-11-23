@@ -2,7 +2,7 @@ use clap::{Args, Parser, Subcommand};
 use serde::Serialize;
 use std::process::ExitCode;
 
-use checklister::{connect, Check, Checklist, ChecklistDetails, Store};
+use checklister::{Check, Checklist, ChecklistDetails, Store, connect};
 
 #[derive(Parser)]
 #[command(name = "checklister", about = "Manage checklists and checks")]
@@ -38,14 +38,8 @@ enum CheckCommand {
     Add(AddCheckArgs),
     List { checklist_id: i64 },
     Undone { checklist_id: i64 },
-    Complete {
-        checklist_id: i64,
-        check_id: i64,
-    },
-    Undo {
-        checklist_id: i64,
-        check_id: i64,
-    },
+    Complete { checklist_id: i64, check_id: i64 },
+    Undo { checklist_id: i64, check_id: i64 },
 }
 
 #[derive(Args)]
@@ -120,9 +114,7 @@ async fn run() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
                 checklist_id,
                 check_id,
             } => {
-                let check = store
-                    .set_check_status(checklist_id, check_id, true)
-                    .await?;
+                let check = store.set_check_status(checklist_id, check_id, true).await?;
                 print_json(&Success {
                     success: true,
                     message: "Check completed",

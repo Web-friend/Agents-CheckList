@@ -6,8 +6,8 @@ static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!();
 
 /// Opens the configured persistent SQLite database and applies pending migrations.
 pub async fn connect() -> Result<SqlitePool, Box<dyn std::error::Error + Send + Sync>> {
-    let database_url = std::env::var("DATABASE_URL")
-        .unwrap_or_else(|_| "sqlite://checklister.db".to_owned());
+    let database_url =
+        std::env::var("DATABASE_URL").unwrap_or_else(|_| "sqlite://checklister.db".to_owned());
     connect_with_url(&database_url).await
 }
 
