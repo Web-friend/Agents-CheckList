@@ -1,12 +1,15 @@
 use serde_json::Value;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::str::FromStr;
 use std::process::{Command, Output};
+use std::str::FromStr;
 use tempfile::TempDir;
 
 fn database() -> (TempDir, String) {
     let directory = tempfile::tempdir().expect("create temporary directory");
-    let url = format!("sqlite://{}", directory.path().join("integration.sqlite").display());
+    let url = format!(
+        "sqlite://{}",
+        directory.path().join("integration.sqlite").display()
+    );
     (directory, url)
 }
 
@@ -19,7 +22,11 @@ fn cli(database_url: &str, args: &[&str]) -> Output {
 }
 
 fn stdout_json(output: &Output) -> Value {
-    assert!(output.status.success(), "{}", String::from_utf8_lossy(&output.stderr));
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     serde_json::from_slice(&output.stdout).expect("valid JSON on stdout")
 }
 
@@ -68,7 +75,10 @@ fn cli_persists_and_manages_checklists() {
     assert_eq!(listed[1]["id"], second_id);
     assert_eq!(listed[1]["order"], 2);
 
-    stdout_json(&cli(&url, &["check", "complete", &id_arg, &first_id.to_string()]));
+    stdout_json(&cli(
+        &url,
+        &["check", "complete", &id_arg, &first_id.to_string()],
+    ));
     let undone = stdout_json(&cli(&url, &["check", "undone", &id_arg]));
     assert_eq!(undone.as_array().unwrap().len(), 1);
     assert_eq!(undone[0]["id"], second_id);

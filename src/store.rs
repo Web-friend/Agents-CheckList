@@ -109,7 +109,8 @@ impl Store {
         .bind(description)
         .execute(&self.pool)
         .await?;
-        self.get_check(checklist_id, result.last_insert_rowid()).await
+        self.get_check(checklist_id, result.last_insert_rowid())
+            .await
     }
 
     pub async fn list_checks(
@@ -147,14 +148,12 @@ impl Store {
         check_id: i64,
         status: bool,
     ) -> Result<Check, StoreError> {
-        let result = sqlx::query(
-            "UPDATE checks SET status = ? WHERE checklist_id = ? AND id = ?",
-        )
-        .bind(status)
-        .bind(checklist_id)
-        .bind(check_id)
-        .execute(&self.pool)
-        .await?;
+        let result = sqlx::query("UPDATE checks SET status = ? WHERE checklist_id = ? AND id = ?")
+            .bind(status)
+            .bind(checklist_id)
+            .bind(check_id)
+            .execute(&self.pool)
+            .await?;
         if result.rows_affected() == 0 {
             return Err(StoreError::NotFound("check"));
         }
@@ -199,7 +198,9 @@ mod tests {
         let directory = tempfile::tempdir().expect("create temporary directory");
         let database_path = directory.path().join("unit.sqlite");
         let database_url = format!("sqlite://{}", database_path.display());
-        let pool = connect_with_url(&database_url).await.expect("open test database");
+        let pool = connect_with_url(&database_url)
+            .await
+            .expect("open test database");
         (directory, Store::new(pool))
     }
 
@@ -212,14 +213,17 @@ mod tests {
             .await
             .unwrap();
         tokio::time::sleep(std::time::Duration::from_millis(5)).await;
-        let second = store
-            .add_check(checklist.id, "Second", "")
-            .await
-            .unwrap();
+        let second = store.add_check(checklist.id, "Second", "").await.unwrap();
 
         let ordered = store.get_order(checklist.id).await.unwrap();
-        assert_eq!(ordered.iter().map(|check| check.id).collect::<Vec<_>>(), [first.id, second.id]);
-        assert_eq!(ordered.iter().map(|check| check.order).collect::<Vec<_>>(), [1, 2]);
+        assert_eq!(
+            ordered.iter().map(|check| check.id).collect::<Vec<_>>(),
+            [first.id, second.id]
+        );
+        assert_eq!(
+            ordered.iter().map(|check| check.order).collect::<Vec<_>>(),
+            [1, 2]
+        );
         assert!(!ordered[0].status);
         assert!(ordered[0].created_at <= ordered[1].created_at);
 
@@ -239,11 +243,12 @@ mod tests {
         store.add_check(checklist.id, "Child", "").await.unwrap();
 
         store.delete_checklist(checklist.id).await.unwrap();
-        let remaining: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM checks WHERE checklist_id = ?")
-            .bind(checklist.id)
-            .fetch_one(&store.pool)
-            .await
-            .unwrap();
+        let remaining: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM checks WHERE checklist_id = ?")
+                .bind(checklist.id)
+                .fetch_one(&store.pool)
+                .await
+                .unwrap();
         assert_eq!(remaining, 0);
     }
 
